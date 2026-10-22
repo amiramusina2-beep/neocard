@@ -7,7 +7,7 @@ from aiogram.filters import Command
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")  # Render сам подставляет сюда URL твоего сервиса
+WEBHOOK_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -114,17 +114,12 @@ def render_card(user):
         f"🎒 Предметов в инвентаре: {len(user['inventory'])} шт."
     )
 
-@dp.message.middleware()
-@dp.callback_query.middleware()
-async def check_ban(handler, event, data):
-    user_id = event.from_user.id
-    if user_id in blocked_users:
-        if isinstance(event, types.Message):
-            await event.answer("❌ Вы заблокированы администратором.")
-        elif isinstance(event, types.CallbackQuery):
-            await event.answer("❌ Вы заблокированы!", show_alert=True)
-        return
-    return await handler(event, data)
+def crypto_keyboard():
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📈 Купить 1 NC ($100)", callback_data="crypto_buy")],
+        [InlineKeyboardButton(text="📉 Продать 1 NC", callback_data="crypto_sell")],
+        [InlineKeyboardButton(text="⬅️ Меню", callback_data="main_menu")]
+    ])
 
 @dp.message(Command("msg"))
 async def admin_broadcast(message: types.Message):
@@ -166,7 +161,8 @@ async def admin_support_actions(cb: types.CallbackQuery):
     if cb.from_user.id != ADMIN_ID:
         await cb.answer("❌ Доступ запрещен", show_alert=True)
         return
-    action, target_id = cb.data.split("_")[1], int(cb.data.split("_")[2])
+    parts = cb.data.split("_")
+    action, target_id = parts[1], int(parts[2])
     if action == "accept":
         await bot.send_message(target_id, "✅ Ваше обращение одобрено админом!")
         await cb.message.edit_text(cb.message.text + "\n\n[Одобрено ✅]")
@@ -178,12 +174,20 @@ async def admin_support_actions(cb: types.CallbackQuery):
 
 @dp.message(Command("start"))
 async def start_cmd(message: types.Message):
+    if message.from_user.id in blocked_users:
+        await message.answer("❌ Вы заблокированы администратором.")
+        return
     user = get_user(message.from_user.id, message.from_user.first_name)
     await message.answer(f"⚡ Здорово, {user['name']}!\n\n{render_card(user)}", reply_markup=main_kb())
 
 @dp.callback_query()
 async def callbacks(cb: types.CallbackQuery):
-    user = get_user(cb.from_user.id, cb.from_user.first_name)
+    user_id = cb.from_user.id
+    if user_id in blocked_users:
+        await cb.answer("❌ Вы заблокированы!", show_alert=True)
+        return
+
+    user = get_user(user_id, cb.from_user.first_name)
     data = cb.data
     now = time.time()
 
@@ -274,17 +278,13 @@ async def callbacks(cb: types.CallbackQuery):
         else:
             await cb.message.edit_text("❌ Заказ прогорел! Клиент завернул код.", reply_markup=back_kb())
     elif data == "crypto_hub":
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📈 Купить 1 NC ($100)", callback_data="crypto_buy")],
-            [InlineKeyboardButton(text="📉 Продать 1 NC", callback_data="crypto_sell")],
-            [InlineKeyboardButton(text="⬅️ Меню", callback_data="main_menu")]
-        ])
-        await cb.message.edit_text(f"📈 Криптобиржа NeoCoin (NC)\n💰 Твой баланс крипты: {user['crypto_balance']:.2f} NC\n💵 Твои USD: ${user['balance']}", reply_markup=kb)
+        await cb.message.edit_text(f"📈 Криптобиржа NeoCoin (NC)\n💰 Твой баланс крипты: {user['crypto_balance']:.2f} NC\n💵 Твои USD: ${user['balance']}", reply_markup=crypto_keyboard())
     elif data == "crypto_buy":
         if user['balance'] >= 100:
             user['balance'] -= 100
             user['crypto_balance'] += 1.0
             await cb.answer("Куплено 1 NC!", show_alert=True)
+            await cb.message.edit_text(f"📈 Криптобиржа NeoCoin (NC)\n💰 Твой баланс крипты: {user['crypto_balance']:.2f} NC\n💵 Твои USD: ${user['balance']}", reply_markup=crypto_keyboard())
         else:
             await cb.answer("❌ Нужно минимум $100!", show_alert=True)
     elif data == "crypto_sell":
@@ -293,6 +293,7 @@ async def callbacks(cb: types.CallbackQuery):
             user['crypto_balance'] -= 1.0
             user['balance'] += rate
             await cb.answer(f"Продано за ${rate}!", show_alert=True)
+            await cb.message.edit_text(f"📈 Криптобиржа NeoCoin (NC)\n💰 Твой баланс крипты: {user['crypto_balance']:.2f} NC\n💵 Твои USD: ${user['balance']}", reply_markup=crypto_keyboard())
         else:
             await cb.answer("❌ У тебя нет крипты NC!", show_alert=True)
 
